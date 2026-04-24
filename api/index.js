@@ -88,6 +88,7 @@ export default async function handler(req, res) {
         if (req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET) return res.status(403).json({ error: 'Forbidden' });
         const keySet = await kv.smembers('licenses:all');
         if (!keySet || keySet.length === 0) return res.status(200).json({ ok: true, licenses: [] });
+        const bfKeys = keySet.filter(k => k.startsWith('BF-'));
         const records = await Promise.all(keySet.map(async (k) => {
             const data = await kv.get(`license:${k}`);
             return data ? { key: k, ...data } : null;
