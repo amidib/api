@@ -48,6 +48,7 @@ export default async function handler(req, res) {
         const license_key = generateKey();
         const record = { bot_token, chat_id: String(chat_id), label: label || 'Unknown', created_at: new Date().toISOString(), active: true };
         await kv.set(`license:${license_key}`, record);
+        await kv.sadd('licenses:all', license_key);
         return res.status(200).json({ ok: true, license_key, label: record.label, created_at: record.created_at });
     }
 
@@ -66,10 +67,13 @@ export default async function handler(req, res) {
     // ── ADMIN: list licenses ─────────────────────────────────
     if (pathname === '/api/admin/list-licenses') {
         if (req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET) return res.status(403).json({ error: 'Forbidden' });
-        const keys = await kv.keys('license:*');
-        const records = await Promise.all(keys.map(async (k) => {
-            const data = await kv.get(k);
-            return { key: k.replace('license:', ''), ...data };
+        
+        const keySet = await kv.smembers('licenses:all');
+        if (!keySet || keySet.length === 0) return res.status(200).json({ ok: true, licenses: [] });
+        
+        const records = await Promise.all(keySet.map(async (k) => {
+            const data = await kv.get(`license:${k}`);
+            return { key: k, ...data };
         }));
         return res.status(200).json({ ok: true, licenses: records });
     }
