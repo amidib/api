@@ -24,18 +24,14 @@ export default async function handler(req, res) {
     const url = new URL(req.url, `https://${req.headers.host}`);
     const pathname = url.pathname;
 
-    // ── VALIDATE LICENSE (called by extension on startup) ────
-    // POST /api/validate-license
-    // Body: { "license_key": "BF-XXXX-XXXX-XXXX" }
+    // ── VALIDATE LICENSE ─────────────────────────────────────
     if (pathname === '/api/validate-license') {
         if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
         const { license_key } = req.body;
         if (!license_key) return res.status(400).json({ ok: false, error: 'license_key required' });
-
         const record = await kv.get(`license:${license_key}`);
         if (!record) return res.status(200).json({ ok: false, error: 'Invalid license key' });
         if (!record.active) return res.status(200).json({ ok: false, error: 'License revoked' });
-
         return res.status(200).json({ ok: true });
     }
 
@@ -64,18 +60,39 @@ export default async function handler(req, res) {
         return res.status(200).json({ ok: true, message: `License ${license_key} revoked` });
     }
 
+    // ── ADMIN: restore license ───────────────────────────────
+    if (pathname === '/api/admin/restore-license') {
+        if (req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET) return res.status(403).json({ error: 'Forbidden' });
+        if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+        const { license_key } = req.body;
+        if (!license_key) return res.status(400).json({ error: 'license_key is required' });
+        const record = await kv.get(`license:${license_key}`);
+        if (!record) return res.status(404).json({ error: 'License not found' });
+        await kv.set(`license:${license_key}`, { ...record, active: true });
+        return res.status(200).json({ ok: true, message: `License ${license_key} restored` });
+    }
+
+    // ── ADMIN: delete license ────────────────────────────────
+    if (pathname === '/api/admin/delete-license') {
+        if (req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET) return res.status(403).json({ error: 'Forbidden' });
+        if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+        const { license_key } = req.body;
+        if (!license_key) return res.status(400).json({ error: 'license_key is required' });
+        await kv.del(`license:${license_key}`);
+        await kv.srem('licenses:all', license_key);
+        return res.status(200).json({ ok: true, message: `License ${license_key} deleted` });
+    }
+
     // ── ADMIN: list licenses ─────────────────────────────────
     if (pathname === '/api/admin/list-licenses') {
         if (req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET) return res.status(403).json({ error: 'Forbidden' });
-        
         const keySet = await kv.smembers('licenses:all');
         if (!keySet || keySet.length === 0) return res.status(200).json({ ok: true, licenses: [] });
-        
         const records = await Promise.all(keySet.map(async (k) => {
             const data = await kv.get(`license:${k}`);
-            return { key: k, ...data };
+            return data ? { key: k, ...data } : null;
         }));
-        return res.status(200).json({ ok: true, licenses: records });
+        return res.status(200).json({ ok: true, licenses: records.filter(Boolean) });
     }
 
     // ── CLIENT: send message ─────────────────────────────────
